@@ -15,14 +15,38 @@ if 'snapshots' not in st.session_state:
 # --- Sidebar Inputs ---
 st.sidebar.header("Design Parameters")
 
-# 入力モードの切り替え (3つのモード)
+# 入力モードの切り替え (4つのモードに進化！)
 input_mode = st.sidebar.radio("Input Mode", [
     "1. Manual (t & D)", 
     "2. Direct AR Input",
-    "3. Optimize Holes (Target C)"
+    "3. Optimize Holes (Target C)",
+    "4. Trade-off (Leakage vs Conductance)"  # 🌟 NEW! トレードオフ可視化モード
 ])
 
 st.sidebar.markdown("---")
+
+# ==========================================
+# ガスパラメータ (Mode 3 & 4 で共通使用)
+# ==========================================
+if input_mode in ["3. Optimize Holes (Target C)", "4. Trade-off (Leakage vs Conductance)"]:
+    with st.sidebar.expander("⚙️ Gas Parameters"):
+        T = st.number_input("Temperature [K]", value=293.0)
+        P_avg = st.number_input("Pressure [Pa]", value=1.1)
+        M_val = st.number_input("Molar Mass [g/mol]", value=70.9)
+        mu_val = st.number_input("Viscosity [1e-5 Pa s]", value=1.32)
+
+    R_gas = 8.314
+    M = M_val * 1e-3
+    mu = mu_val * 1e-5
+    v_bar = np.sqrt((8 * R_gas * T) / (np.pi * M))
+
+    # コンダクタンス計算の共通関数
+    def calc_single_conductance(D_m, t_m):
+        A = np.pi * (D_m**2) / 4
+        alpha = 1 / (1 + (3 * t_m) / (4 * D_m))
+        C_mol = 0.25 * A * v_bar * alpha
+        C_visc = (np.pi * (D_m**4) * P_avg) / (128 * mu * t_m)
+        return 1 / ((1 / C_mol) + (1 / C_visc))
 
 # ==========================================
 # Mode 1 & 2: シンプルな単孔漏洩率の計算
@@ -45,11 +69,7 @@ if input_mode in ["1. Manual (t & D)", "2. Direct AR Input"]:
     c3.metric("UV Blocking Rate", f"{100-leakage_rate:.4f} %")
 
     if st.button("📸 Take Snapshot"):
-        st.session_state.snapshots.append({
-            "Mode": "Simple",
-            "AR": round(final_AR, 2),
-            "UV Leakage (%)": round(leakage_rate, 6)
-        })
+        st.session_state.snapshots.append({"Mode": "Simple", "AR": round(final_AR, 2), "UV Leakage (%)": round(leakage_rate, 6)})
         st.success(f"Snapshot saved: AR={final_AR:.2f}")
 
     st.subheader("UV Leakage Trend vs. AR")
@@ -58,8 +78,7 @@ if input_mode in ["1. Manual (t & D)", "2. Direct AR Input"]:
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=ar_range, y=leakage_trend, mode='lines', name='Theoretical Trend', line=dict(color='royalblue')))
-    fig.add_trace(go.Scatter(x=[final_AR], y=[leakage_rate], mode='markers+text', name='Current Point', 
-                             text=[f"AR={final_AR:.1f}"], textposition="top right", marker=dict(color='red', size=12)))
+    fig.add_trace(go.Scatter(x=[final_AR], y=[leakage_rate], mode='markers+text', name='Current Point', text=[f"AR={final_AR:.1f}"], textposition="top right", marker=dict(color='red', size=12)))
     fig.update_layout(xaxis_title="Aspect Ratio (AR)", yaxis_title="UV Leakage Rate (%)", template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
 
@@ -69,8 +88,6 @@ if input_mode in ["1. Manual (t & D)", "2. Direct AR Input"]:
 elif input_mode == "3. Optimize Holes (Target C)":
     t_opt = st.sidebar.number_input("Fixed Thickness (t) [mm]", value=10.0, step=0.1)
     C_target = st.sidebar.number_input("Target Conductance [m³/s]", value=0.0157, format="%.5f")
-    
-    # 🌟 NEW: ARベースでいじるか、直径Dベースでいじるかを選択
     opt_variable = st.sidebar.radio("Vary Parameter by:", ["Aspect Ratio (AR)", "Hole Diameter (D)"])
     
     if opt_variable == "Aspect Ratio (AR)":
@@ -80,26 +97,10 @@ elif input_mode == "3. Optimize Holes (Target C)":
         D_test = st.sidebar.slider("Test Hole Diameter (D) [mm]", 0.5, 10.0, 2.5, step=0.1)
         ar_test = t_opt / D_test
 
-    with st.sidebar.expander("⚙️ Gas Parameters"):
-        T = st.number_input("Temperature [K]", value=293.0)
-        P_avg = st.number_input("Pressure [Pa]", value=1.1)
-        M_val = st.number_input("Molar Mass [g/mol]", value=70.9)
-        mu_val = st.number_input("Viscosity [1e-5 Pa s]", value=1.32)
-
-    R_gas = 8.314
-    M = M_val * 1e-3
-    mu = mu_val * 1e-5
-    v_bar = np.sqrt((8 * R_gas * T) / (np.pi * M))
-
     def calc_opt(ar_val, t_mm):
         t_m = t_mm * 1e-3
         D_m = t_m / ar_val
-        A = np.pi * (D_m**2) / 4
-        alpha = 1 / (1 + (3 * t_m) / (4 * D_m))
-        C_mol = 0.25 * A * v_bar * alpha
-        C_visc = (np.pi * (D_m**4) * P_avg) / (128 * mu * t_m)
-        C_single = 1 / ((1 / C_mol) + (1 / C_visc))
-        
+        C_single = calc_single_conductance(D_m, t_m)
         N_req = C_target / C_single
         R_pct = 100 / (1 + 4 * ar_val**2)
         Total_idx = N_req * (R_pct / 100)
@@ -115,45 +116,81 @@ elif input_mode == "3. Optimize Holes (Target C)":
     c4.metric("Total Leakage Index", f"{curr_Total:.2f}")
 
     if st.button("📸 Take Snapshot"):
-        st.session_state.snapshots.append({
-            "Mode": "Opt. Holes",
-            "t [mm]": t_opt,
-            "AR": round(ar_test, 2),
-            "D [mm]": round(D_test, 2),
-            "Req. Holes (N)": int(curr_N),
-            "Total Index": round(curr_Total, 2)
-        })
-        st.success(f"Snapshot saved: AR={ar_test:.2f}, D={D_test:.2f}mm")
+        st.session_state.snapshots.append({"Mode": "Opt. Holes", "t [mm]": t_opt, "AR": round(ar_test, 2), "D [mm]": round(D_test, 2), "Req. Holes": int(curr_N), "Total Index": round(curr_Total, 2)})
+        st.success(f"Snapshot saved: AR={ar_test:.2f}")
 
-    # 🌟 NEW: 選択した変数に合わせてグラフのX軸を動的に変更
     st.subheader(f"Optimization Graph: {opt_variable} vs Total Leakage & Holes")
-    
-    if opt_variable == "Aspect Ratio (AR)":
-        x_array = np.linspace(1.0, 15.0, 100)
-        x_title = "Aspect Ratio (AR)"
-        curr_x = ar_test
-    else:
-        x_array = np.linspace(0.5, 10.0, 100)
-        x_title = "Hole Diameter (D) [mm]"
-        curr_x = D_test
+    x_array = np.linspace(1.0, 15.0, 100) if opt_variable == "Aspect Ratio (AR)" else np.linspace(0.5, 10.0, 100)
+    x_title = "Aspect Ratio (AR)" if opt_variable == "Aspect Ratio (AR)" else "Hole Diameter (D) [mm]"
+    curr_x = ar_test if opt_variable == "Aspect Ratio (AR)" else D_test
         
-    trend_Tot = []
-    trend_N = []
+    trend_Tot, trend_N = [], []
     for x_val in x_array:
-        # AR計算用に変換
         temp_ar = x_val if opt_variable == "Aspect Ratio (AR)" else (t_opt / x_val)
         _, _, n, _, tot = calc_opt(temp_ar, t_opt)
-        trend_Tot.append(tot)
-        trend_N.append(n)
+        trend_Tot.append(tot), trend_N.append(n)
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(x=x_array, y=trend_Tot, mode='lines', name='Total Leakage Index', line=dict(color='red')), secondary_y=False)
     fig.add_trace(go.Scatter(x=x_array, y=trend_N, mode='lines', name='Required Holes (N)', line=dict(color='royalblue', dash='dash')), secondary_y=True)
     fig.add_trace(go.Scatter(x=[curr_x], y=[curr_Total], mode='markers+text', name='Current Point', text=["Current"], textposition="top center", marker=dict(color='orange', size=12)), secondary_y=False)
-
     fig.update_layout(xaxis_title=x_title, template="plotly_white", hovermode="x unified")
     fig.update_yaxes(title_text="Total Leakage Index (Red)", secondary_y=False)
     fig.update_yaxes(title_text="Required Holes (Blue Dash)", secondary_y=True)
+    st.plotly_chart(fig, use_container_width=True)
+
+# ==========================================
+# Mode 4: Trade-off (Leakage vs Conductance) 🌟 NEW!
+# ==========================================
+elif input_mode == "4. Trade-off (Leakage vs Conductance)":
+    st.sidebar.markdown("---")
+    fixed_param = st.sidebar.radio("What is your physical constraint?", ["Fixed Thickness (t)", "Fixed Diameter (D)"])
+    
+    if fixed_param == "Fixed Thickness (t)":
+        fixed_val = st.sidebar.number_input("Thickness (t) [mm]", value=10.0, step=0.1)
+    else:
+        fixed_val = st.sidebar.number_input("Diameter (D) [mm]", value=2.5, step=0.1)
+
+    st.subheader(f"Trade-off Analysis: UV Leakage vs Conductance ({fixed_param} = {fixed_val} mm)")
+    st.write("This graph perfectly illustrates the core dilemma of NBE aperture design: Increasing AR blocks UV light, but drastically reduces gas flow.")
+
+    # グラフ用の配列 (ARを 1 から 15 まで変化させる)
+    ar_array = np.linspace(1.0, 15.0, 100)
+    leakage_array = 100 / (1 + 4 * ar_array**2)
+    conductance_array = []
+
+    for ar in ar_array:
+        if fixed_param == "Fixed Thickness (t)":
+            t_m = fixed_val * 1e-3
+            D_m = t_m / ar
+        else:
+            D_m = fixed_val * 1e-3
+            t_m = D_m * ar
+        
+        # 単孔のコンダクタンスを計算
+        C_single = calc_single_conductance(D_m, t_m)
+        conductance_array.append(C_single)
+
+    # トレードオフグラフの作成 (2軸グラフ)
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # Trace 1: UV Leakage (Red) - 下がるほど良い
+    fig.add_trace(go.Scatter(x=ar_array, y=leakage_array, mode='lines', name='UV Leakage Rate (%)', 
+                             line=dict(color='red', width=3)), secondary_y=False)
+    
+    # Trace 2: Conductance (Green) - 上がるほど良い
+    fig.add_trace(go.Scatter(x=ar_array, y=conductance_array, mode='lines', name='Single Hole Conductance [m³/s]', 
+                             line=dict(color='green', width=3)), secondary_y=True)
+
+    fig.update_layout(
+        xaxis_title="Aspect Ratio (AR)",
+        template="plotly_white",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    fig.update_yaxes(title_text="<b>UV Leakage Rate (%)</b> (Red Line)", secondary_y=False)
+    fig.update_yaxes(title_text="<b>Conductance [m³/s]</b> (Green Line)", secondary_y=True)
+
     st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
