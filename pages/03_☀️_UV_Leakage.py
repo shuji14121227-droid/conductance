@@ -15,20 +15,21 @@ if 'snapshots' not in st.session_state:
 # --- Sidebar Inputs ---
 st.sidebar.header("Design Parameters")
 
-# 入力モードの切り替え (4つのモードに進化！)
+# 入力モードの切り替え (5つのモードすべて搭載！)
 input_mode = st.sidebar.radio("Input Mode", [
     "1. Manual (t & D)", 
     "2. Direct AR Input",
     "3. Optimize Holes (Target C)",
-    "4. Trade-off (Leakage vs Conductance)"  # 🌟 NEW! トレードオフ可視化モード
+    "4. Trade-off (Leakage vs Conductance)", 
+    "5. Ultimate Heatmap (t vs D)"
 ])
 
 st.sidebar.markdown("---")
 
 # ==========================================
-# ガスパラメータ (Mode 3 & 4 で共通使用)
+# ガスパラメータ (Mode 3, 4, 5 で共通使用)
 # ==========================================
-if input_mode in ["3. Optimize Holes (Target C)", "4. Trade-off (Leakage vs Conductance)"]:
+if input_mode in ["3. Optimize Holes (Target C)", "4. Trade-off (Leakage vs Conductance)", "5. Ultimate Heatmap (t vs D)"]:
     with st.sidebar.expander("⚙️ Gas Parameters"):
         T = st.number_input("Temperature [K]", value=293.0)
         P_avg = st.number_input("Pressure [Pa]", value=1.1)
@@ -140,7 +141,7 @@ elif input_mode == "3. Optimize Holes (Target C)":
     st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# Mode 4: Trade-off (Leakage vs Conductance) 🌟 NEW!
+# Mode 4: Trade-off (Leakage vs Conductance) 🌟 修正版
 # ==========================================
 elif input_mode == "4. Trade-off (Leakage vs Conductance)":
     st.sidebar.markdown("---")
@@ -154,7 +155,6 @@ elif input_mode == "4. Trade-off (Leakage vs Conductance)":
     st.subheader(f"Trade-off Analysis: UV Leakage vs Conductance ({fixed_param} = {fixed_val} mm)")
     st.write("This graph perfectly illustrates the core dilemma of NBE aperture design: Increasing AR blocks UV light, but drastically reduces gas flow.")
 
-    # グラフ用の配列 (ARを 1 から 15 まで変化させる)
     ar_array = np.linspace(1.0, 15.0, 100)
     leakage_array = 100 / (1 + 4 * ar_array**2)
     conductance_array = []
@@ -167,20 +167,20 @@ elif input_mode == "4. Trade-off (Leakage vs Conductance)":
             D_m = fixed_val * 1e-3
             t_m = D_m * ar
         
-        # 単孔のコンダクタンスを計算
         C_single = calc_single_conductance(D_m, t_m)
         conductance_array.append(C_single)
 
-    # トレードオフグラフの作成 (2軸グラフ)
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     
-    # Trace 1: UV Leakage (Red) - 下がるほど良い
+    # 🌟 NEW: hovertemplate を設定し、ポップアップも小数点で表示
     fig.add_trace(go.Scatter(x=ar_array, y=leakage_array, mode='lines', name='UV Leakage Rate (%)', 
-                             line=dict(color='red', width=3)), secondary_y=False)
+                             line=dict(color='red', width=3),
+                             hovertemplate='%{y:.4f} %<extra></extra>'), secondary_y=False)
     
-    # Trace 2: Conductance (Green) - 上がるほど良い
-    fig.add_trace(go.Scatter(x=ar_array, y=conductance_array, mode='lines', name='Single Hole Conductance [m³/s]', 
-                             line=dict(color='green', width=3)), secondary_y=True)
+    # 🌟 NEW: hovertemplate を設定し、コンダクタンスも小数第6位まで表示
+    fig.add_trace(go.Scatter(x=ar_array, y=conductance_array, mode='lines', name='Single Hole Conductance', 
+                             line=dict(color='green', width=3),
+                             hovertemplate='%{y:.6f} m³/s<extra></extra>'), secondary_y=True)
 
     fig.update_layout(
         xaxis_title="Aspect Ratio (AR)",
@@ -188,9 +188,60 @@ elif input_mode == "4. Trade-off (Leakage vs Conductance)":
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
+    
+    # 🌟 NEW: tickformat=".6f" を追加してY軸メモリを小数点第6位固定にする（μを消す）
     fig.update_yaxes(title_text="<b>UV Leakage Rate (%)</b> (Red Line)", secondary_y=False)
-    fig.update_yaxes(title_text="<b>Conductance [m³/s]</b> (Green Line)", secondary_y=True)
+    fig.update_yaxes(title_text="<b>Conductance [m³/s]</b> (Green Line)", tickformat=".6f", secondary_y=True)
 
+    st.plotly_chart(fig, use_container_width=True)
+
+# ==========================================
+# Mode 5: Ultimate Heatmap (t vs D)
+# ==========================================
+elif input_mode == "5. Ultimate Heatmap (t vs D)":
+    st.sidebar.markdown("---")
+    C_target = st.sidebar.number_input("Target Conductance [m³/s]", value=0.0157, format="%.5f")
+    
+    st.subheader("🗺️ The Ultimate Design Map: Total Leakage Index")
+    st.write("This heatmap calculates every possible combination of **Thickness ($t$)** and **Diameter ($D$)** to maintain the target gas flow. Find the blue ocean! (Blue = Safe/Low Leakage, Red = Danger/High Leakage)")
+
+    D_vals = np.linspace(0.5, 10.0, 100) 
+    t_vals = np.linspace(1.0, 30.0, 100) 
+    D_grid, t_grid = np.meshgrid(D_vals, t_vals)
+
+    D_m_grid = D_grid * 1e-3
+    t_m_grid = t_grid * 1e-3
+
+    A_grid = np.pi * (D_m_grid**2) / 4
+    alpha_grid = 1 / (1 + (3 * t_m_grid) / (4 * D_m_grid))
+    C_mol_grid = 0.25 * A_grid * v_bar * alpha_grid
+    C_visc_grid = (np.pi * (D_m_grid**4) * P_avg) / (128 * mu * t_m_grid)
+    C_single_grid = 1 / ((1 / C_mol_grid) + (1 / C_visc_grid))
+
+    N_req_grid = C_target / C_single_grid
+    AR_grid = t_grid / D_grid
+    R_pct_grid = 100 / (1 + 4 * AR_grid**2)
+    Total_idx_grid = N_req_grid * (R_pct_grid / 100)
+
+    fig = go.Figure(data=
+        go.Contour(
+            z=Total_idx_grid,
+            x=D_vals,
+            y=t_vals, 
+            colorscale='RdYlBu_r',
+            colorbar=dict(title='Total Leakage<br>Index'),
+            hovertemplate="Diameter (D): %{x:.2f} mm<br>Thickness (t): %{y:.2f} mm<br><b>Total Leakage: %{z:.2f}</b><br>AR: %{customdata[0]:.2f}<br>Req. Holes: %{customdata[1]:.0f}<extra></extra>",
+            customdata=np.stack((AR_grid, N_req_grid), axis=-1)
+        )
+    )
+
+    fig.update_layout(
+        xaxis_title="Hole Diameter (D) [mm]",
+        yaxis_title="Aperture Thickness (t) [mm]",
+        template="plotly_white",
+        width=800,
+        height=600
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
