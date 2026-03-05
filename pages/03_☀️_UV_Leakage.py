@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # Page Configuration
-st.set_page_config(page_title="UV Leakage Snapshot", layout="wide")
+st.set_page_config(page_title="UV Leakage Simulator", layout="wide")
 st.title("☀️ UV Leakage Simulator & Snapshot")
 
 # セッション状態の初期化
@@ -13,22 +13,20 @@ if 'snapshots' not in st.session_state:
 
 # --- Sidebar Inputs ---
 st.sidebar.header("Design Parameters")
-
 t_uv = st.sidebar.slider("Aperture Thickness (t) [mm]", 1.0, 30.0, 10.0)
 t_input = st.sidebar.number_input("Direct Input (t)", value=float(t_uv), step=0.1)
-
 D_uv = st.sidebar.slider("Hole Diameter (D) [mm]", 0.1, 10.0, 2.5)
 D_input = st.sidebar.number_input("Direct Input (D)", value=float(D_uv), step=0.1)
 
 final_t = t_input
 final_D = D_input
 
-# --- Calculation Logic (Corrected) ---
-# ご指摘通り: tan(theta) = (D/2) / t = D / (2t)
+# --- Calculation Logic ---
+# Corrected Model: tan(theta) = (D/2) / t = D / (2t)
 tan_theta = final_D / (2 * final_t)
 theta_max = np.arctan(tan_theta)
 
-# R = sin^2(theta_max)
+# R = sin^2(theta_max) = 1 / (1 + (2AR)^2)
 leakage_rate = (np.sin(theta_max)**2) * 100
 AR = final_t / final_D
 
@@ -55,8 +53,6 @@ if st.button("📸 Take Snapshot"):
 # --- Visualization ---
 st.subheader("UV Leakage Trend")
 ar_range = np.linspace(0.5, 20, 100)
-# Trend calculation with corrected formula
-# tan_theta = 1 / (2 * AR)
 tan_theta_range = 1 / (2 * ar_range)
 leakage_trend = (np.sin(np.arctan(tan_theta_range))**2) * 100
 
@@ -84,9 +80,20 @@ if st.session_state.snapshots:
         st.session_state.snapshots = []
         st.rerun()
 
-# --- Theory Section (Corrected) ---
+# --- Theory Section (Updated with images formulas) ---
 st.markdown("---")
 st.header("Theory: Diagonal Path Model (Corrected)")
-st.write("The maximum angle $\\theta_{max}$ is defined by the path from the center of the entrance to the edge of the exit (or edge-to-edge path considering the shift).")
+st.write("The maximum transmission angle is defined by the geometric diagonal path:")
+
+# 1枚目の画像: tanの定義
 st.latex(r"\tan(\theta_{max}) = \frac{D/2}{t} = \frac{D}{2t} = \frac{1}{2AR}")
-st.latex(r"R = \sin^2(\theta_{max})")
+
+# 2枚目の画像: 角度と漏洩率の関係
+st.write("Therefore, the maximum transmission angle is:")
+st.latex(r"\theta_{max} = \arctan\left(\frac{1}{2AR}\right)")
+
+st.write("For an isotropic light source (following Lambert's Cosine Law flux distribution), the UV light leakage ratio ($R$) can be expressed as:")
+st.latex(r"R = \sin^2(\theta_{max}) = \frac{1}{1 + \tan^{-2}(\theta_{max})} = \frac{1}{1 + (2AR)^2}")
+
+st.write("Converting this to a percentage:")
+st.latex(r"UV\ Leakage\ (\%) = \frac{100}{1 + (2AR)^2}\ \%")
