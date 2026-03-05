@@ -19,7 +19,7 @@ st.sidebar.header("Design Parameters")
 input_mode = st.sidebar.radio("Input Mode", [
     "1. Manual (t & D)", 
     "2. Direct AR Input",
-    "3. Optimize Holes (Target C)"  # ← NEW! 3つ目の機能
+    "3. Optimize Holes (Target C)"
 ])
 
 st.sidebar.markdown("---")
@@ -36,7 +36,6 @@ if input_mode in ["1. Manual (t & D)", "2. Direct AR Input"]:
         final_AR = st.sidebar.number_input("Aspect Ratio (AR)", value=4.0, step=0.1)
         st.sidebar.info(f"Using AR = {final_AR}")
 
-    # 計算ロジック: R = 100 / (1 + 4*AR^2)
     leakage_rate = 100 / (1 + 4 * final_AR**2)
 
     st.subheader("Current Performance Analysis")
@@ -53,7 +52,6 @@ if input_mode in ["1. Manual (t & D)", "2. Direct AR Input"]:
         })
         st.success(f"Snapshot saved: AR={final_AR:.2f}")
 
-    # グラフ表示
     st.subheader("UV Leakage Trend vs. AR")
     ar_range = np.linspace(0.5, 20, 100)
     leakage_trend = 100 / (1 + 4 * ar_range**2)
@@ -71,7 +69,16 @@ if input_mode in ["1. Manual (t & D)", "2. Direct AR Input"]:
 elif input_mode == "3. Optimize Holes (Target C)":
     t_opt = st.sidebar.number_input("Fixed Thickness (t) [mm]", value=10.0, step=0.1)
     C_target = st.sidebar.number_input("Target Conductance [m³/s]", value=0.0157, format="%.5f")
-    ar_test = st.sidebar.slider("Test Aspect Ratio (AR)", 1.0, 15.0, 4.0, step=0.1)
+    
+    # 🌟 NEW: ARベースでいじるか、直径Dベースでいじるかを選択
+    opt_variable = st.sidebar.radio("Vary Parameter by:", ["Aspect Ratio (AR)", "Hole Diameter (D)"])
+    
+    if opt_variable == "Aspect Ratio (AR)":
+        ar_test = st.sidebar.slider("Test Aspect Ratio (AR)", 1.0, 15.0, 4.0, step=0.1)
+        D_test = t_opt / ar_test
+    else:
+        D_test = st.sidebar.slider("Test Hole Diameter (D) [mm]", 0.5, 10.0, 2.5, step=0.1)
+        ar_test = t_opt / D_test
 
     with st.sidebar.expander("⚙️ Gas Parameters"):
         T = st.number_input("Temperature [K]", value=293.0)
@@ -84,7 +91,6 @@ elif input_mode == "3. Optimize Holes (Target C)":
     mu = mu_val * 1e-5
     v_bar = np.sqrt((8 * R_gas * T) / (np.pi * M))
 
-    # あなたが書いたロジックの関数化
     def calc_opt(ar_val, t_mm):
         t_m = t_mm * 1e-3
         D_m = t_m / ar_val
@@ -99,12 +105,12 @@ elif input_mode == "3. Optimize Holes (Target C)":
         Total_idx = N_req * (R_pct / 100)
         return D_m * 1000, C_single, np.ceil(N_req), R_pct, Total_idx
 
-    curr_D, curr_C, curr_N, curr_R, curr_Total = calc_opt(ar_test, t_opt)
+    _, curr_C, curr_N, curr_R, curr_Total = calc_opt(ar_test, t_opt)
 
     st.subheader(f"Optimization Analysis (Target = {C_target} m³/s)")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Aspect Ratio (AR)", f"{ar_test:.1f}")
-    c2.metric("Required D", f"{curr_D:.2f} mm")
+    c1.metric("Aspect Ratio (AR)", f"{ar_test:.2f}")
+    c2.metric("Hole Diameter (D)", f"{D_test:.2f} mm")
     c3.metric("Required Holes (N)", f"{int(curr_N):,}")
     c4.metric("Total Leakage Index", f"{curr_Total:.2f}")
 
@@ -113,29 +119,39 @@ elif input_mode == "3. Optimize Holes (Target C)":
             "Mode": "Opt. Holes",
             "t [mm]": t_opt,
             "AR": round(ar_test, 2),
-            "Req. D [mm]": round(curr_D, 2),
+            "D [mm]": round(D_test, 2),
             "Req. Holes (N)": int(curr_N),
             "Total Index": round(curr_Total, 2)
         })
-        st.success(f"Snapshot saved: AR={ar_test:.1f}, N={int(curr_N)}")
+        st.success(f"Snapshot saved: AR={ar_test:.2f}, D={D_test:.2f}mm")
 
-    st.subheader("Optimization Graph: AR vs Total Leakage & Required Holes")
-    ar_array = np.linspace(1.0, 15.0, 100)
+    # 🌟 NEW: 選択した変数に合わせてグラフのX軸を動的に変更
+    st.subheader(f"Optimization Graph: {opt_variable} vs Total Leakage & Holes")
     
-    # グラフ描画用の配列計算
+    if opt_variable == "Aspect Ratio (AR)":
+        x_array = np.linspace(1.0, 15.0, 100)
+        x_title = "Aspect Ratio (AR)"
+        curr_x = ar_test
+    else:
+        x_array = np.linspace(0.5, 10.0, 100)
+        x_title = "Hole Diameter (D) [mm]"
+        curr_x = D_test
+        
     trend_Tot = []
     trend_N = []
-    for a in ar_array:
-        _, _, n, _, tot = calc_opt(a, t_opt)
+    for x_val in x_array:
+        # AR計算用に変換
+        temp_ar = x_val if opt_variable == "Aspect Ratio (AR)" else (t_opt / x_val)
+        _, _, n, _, tot = calc_opt(temp_ar, t_opt)
         trend_Tot.append(tot)
         trend_N.append(n)
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Scatter(x=ar_array, y=trend_Tot, mode='lines', name='Total Leakage Index', line=dict(color='red')), secondary_y=False)
-    fig.add_trace(go.Scatter(x=ar_array, y=trend_N, mode='lines', name='Required Holes (N)', line=dict(color='royalblue', dash='dash')), secondary_y=True)
-    fig.add_trace(go.Scatter(x=[ar_test], y=[curr_Total], mode='markers+text', name='Current Point', text=["Current"], textposition="top center", marker=dict(color='orange', size=12)), secondary_y=False)
+    fig.add_trace(go.Scatter(x=x_array, y=trend_Tot, mode='lines', name='Total Leakage Index', line=dict(color='red')), secondary_y=False)
+    fig.add_trace(go.Scatter(x=x_array, y=trend_N, mode='lines', name='Required Holes (N)', line=dict(color='royalblue', dash='dash')), secondary_y=True)
+    fig.add_trace(go.Scatter(x=[curr_x], y=[curr_Total], mode='markers+text', name='Current Point', text=["Current"], textposition="top center", marker=dict(color='orange', size=12)), secondary_y=False)
 
-    fig.update_layout(xaxis_title="Aspect Ratio (AR)", template="plotly_white", hovermode="x unified")
+    fig.update_layout(xaxis_title=x_title, template="plotly_white", hovermode="x unified")
     fig.update_yaxes(title_text="Total Leakage Index (Red)", secondary_y=False)
     fig.update_yaxes(title_text="Required Holes (Blue Dash)", secondary_y=True)
     st.plotly_chart(fig, use_container_width=True)
